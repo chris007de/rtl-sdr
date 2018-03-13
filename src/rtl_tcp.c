@@ -79,6 +79,7 @@ typedef struct { /* structure size must be multiple of 2 bytes */
 static rtlsdr_dev_t *dev = NULL;
 
 static int enable_biastee = 0;
+static int swap_iq = 0;
 static int global_numq = 0;
 static struct llist *ll_buffers = 0;
 static int llbuf_num = 500;
@@ -97,7 +98,8 @@ void usage(void)
 		"\t[-n max number of linked list buffers to keep (default: 500)]\n"
 		"\t[-d device index (default: 0)]\n"
 		"\t[-P ppm_error (default: 0)]\n"
-		"\t[-T enable bias-T on GPIO PIN 0 (works for rtl-sdr.com v3 dongles)]\n");
+		"\t[-T enable bias-T on GPIO PIN 0 (works for rtl-sdr.com v3 dongles)]\n"
+		"\t[-S swap I and Q data]\n");
 	exit(1);
 }
 
@@ -143,11 +145,44 @@ static void sighandler(int signum)
 }
 #endif
 
+uint16_t _bswap16(uint16_t a)
+{
+  a = ((a & 0x00FF) << 8) | ((a & 0xFF00) >> 8);
+  return a;
+}
+
+void _bswap16f(void *el)
+{
+    uint16_t    *ptr    = el;
+    uint16_t    val     = *ptr;
+
+    *ptr = ((val & 0x00FF) << 8) | ((val & 0xFF00) >> 8);
+}
+
+void swap_buffer(unsigned char* buf, uint32_t len)
+{
+	size_t elem_size 		= sizeof(uint16_t);
+	size_t i                = 0;
+
+	if (len%2) {printf("UNEVEN! %d\n", len);}
+
+	for (i = 0; i < len; i += elem_size) {
+		/* Pointer to element */
+		void *element   = (((unsigned char *)buf) + i);
+
+		// Swap the bytes
+		_bswap16f(element);
+	}
+}
+
 void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
 {
 	if(!do_exit) {
 		struct llist *rpt = (struct llist*)malloc(sizeof(struct llist));
 		rpt->data = (char*)malloc(len);
+		if (swap_iq) {
+			swap_buffer(buf, len);
+		}
 		memcpy(rpt->data, buf, len);
 		rpt->len = len;
 		rpt->next = NULL;
@@ -397,7 +432,7 @@ int main(int argc, char **argv)
 	struct sigaction sigact, sigign;
 #endif
 
-	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:T")) != -1) {
+	while ((opt = getopt(argc, argv, "a:p:f:g:s:b:n:d:P:T:S")) != -1) {
 		switch (opt) {
 		case 'd':
 			dev_index = verbose_device_search(optarg);
@@ -429,6 +464,9 @@ int main(int argc, char **argv)
 			break;
 		case 'T':
 			enable_biastee = 1;
+			break;
+		case 'S':
+			swap_iq = 1;
 			break;
 		default:
 			usage();
